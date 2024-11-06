@@ -2,15 +2,20 @@ const express = require('express');
 const {
   markAttendance,
   getAttendanceRecords,
+  getAttendanceReport,
+  calculateAttendancePercentage,
 } = require('../controllers/attendance');
 const router = express.Router();
-const { authenticateToken } = require('../middleware/authMiddleware'); // Import authentication middleware
+const {
+  authenticateToken,
+  authorizeAdmin,
+} = require('../middleware/authMiddleware');
 const { check, validationResult } = require('express-validator');
+const createExcelFile = require('../utils/excelHelper');
 
-// Route for marking attendance
 router.post(
   '/mark',
-  authenticateToken, // Authentication middleware to verify token for student
+  authenticateToken,
   [
     check('studentId', 'Student ID is required').notEmpty(),
     check('classId', 'Class ID is required').notEmpty(),
@@ -24,21 +29,51 @@ router.post(
     ).isFloat(),
   ],
   async (req, res) => {
-    // Validate request fields
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
+    await markAttendance(req, res);
+  }
+);
 
-    // Call the markAttendance function from attendance controller
+router.get('/records/:studentId', authenticateToken, getAttendanceRecords);
+
+router.get('/report', authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const reportData = await getAttendanceReport();
+    return res.status(200).json({ reportData });
+  } catch (error) {
+    console.error('Error generating attendance report:', error);
+    res.status(500).json({ message: 'Error generating attendance report' });
+  }
+});
+
+router.get(
+  '/report/excel',
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
     try {
-      await markAttendance(req, res); // Directly call the markAttendance function
+      const attendanceData = await getAttendanceReport();
+      const excelFilePath = createExcelFile(attendanceData);
+
+      res.download(excelFilePath, (err) => {
+        if (err) {
+          console.error('Error downloading the file:', err);
+          res.status(500).send('File download failed');
+        }
+      });
     } catch (error) {
-      console.error('Error in attendance route:', error);
-      return res.status(500).json({ message: 'Internal server error' });
+      console.error('Error generating Excel file:', error);
+      res.status(500).send('Error generating attendance report');
     }
   }
 );
-router.get('/:studentId', getAttendanceRecords);
+
+router.get(
+  '/attendance/percentage/:studentId/:classId',
+  calculateAttendancePercentage
+);
 
 module.exports = router;
